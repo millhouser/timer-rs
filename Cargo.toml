@@ -1,0 +1,32 @@
+[package]
+name = "timer-rs"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+slint = { version = "=1.18.1", default-features = false, features = ["std", "renderer-software", "compat-1-2", "system-tray"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+font8x8 = "0.3"
+notify-rust = "4.18"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+
+[target.'cfg(windows)'.dependencies]
+slint = { version = "=1.18.1", default-features = false, features = ["backend-winit"] }
+windows-sys = { version = "0.61", features = ["Win32_Media_Audio"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+slint = { version = "=1.18.1", default-features = false, features = ["backend-winit-wayland"] }
+fontique = { version = "0.11", features = ["fontconfig-dlopen"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

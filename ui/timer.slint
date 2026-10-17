@@ -1,0 +1,143 @@
+import { Button, CheckBox, GroupBox, LineEdit, SpinBox, StandardButton } from "std-widgets.slint";
+
+export component SettingsWindow inherits Window {
+    title: "Timer";
+    icon: @image-url("../assets/clock.svg");
+    preferred-width: 540px;
+    in-out property <string> sound-file;
+    in-out property <bool> sound-enabled: true;
+    in-out property <int> custom-minutes: 11;
+    in property <bool> standalone: false;
+    in property <bool> timer-running: false;
+    in property <string> timer-status;
+    callback start(int);
+    callback restart();
+    callback abort();
+    callback browse();
+    callback play();
+    callback accept();
+    callback about();
+    callback quit();
+    callback duration-changed(int);
+
+    VerticalLayout {
+        padding: 11px;
+        spacing: 6px;
+        if root.standalone: VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: root.timer-status;
+                font-size: 24px;
+                horizontal-alignment: center;
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                for minute in [1, 2, 3, 4, 5]: Button {
+                    text: "\{minute} Min";
+                    enabled: !root.timer-running;
+                    clicked => { root.start(minute); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                for minute in [6, 7, 8, 9, 10]: Button {
+                    text: "\{minute} Min";
+                    enabled: !root.timer-running;
+                    clicked => { root.start(minute); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                Button {
+                    text: "Starten";
+                    enabled: !root.timer-running;
+                    clicked => { root.start(root.custom-minutes); }
+                }
+                Button { text: "Neu starten"; clicked => { root.restart(); } }
+                Button {
+                    text: "Abbrechen";
+                    enabled: root.timer-running;
+                    clicked => { root.abort(); }
+                }
+            }
+        }
+        GroupBox {
+            title: "Sound-Datei";
+            HorizontalLayout {
+                spacing: 6px;
+                LineEdit {
+                    text <=> root.sound-file;
+                    accepted => { root.accept(); }
+                }
+                Button { text: "Durchsuchen..."; clicked => { root.browse(); } }
+                Button { text: "Anhören"; clicked => { root.play(); } }
+                CheckBox { text: "abspielen"; checked <=> root.sound-enabled; }
+            }
+        }
+        GroupBox {
+            title: "Benutzerdefinierter Timer";
+            HorizontalLayout {
+                spacing: 6px;
+                SpinBox {
+                    value <=> root.custom-minutes;
+                    minimum: 1;
+                    maximum: 99;
+                    edited(value) => { root.duration-changed(value); }
+                }
+                Text { text: "Minuten"; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Button { text: "Über..."; clicked => { root.about(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Beenden"; clicked => { root.quit(); } }
+            Button { text: "OK"; primary: true; clicked => { root.accept(); } }
+        }
+    }
+}
+
+export component TimerTray inherits SystemTrayIcon {
+    title: "Timer";
+    in property <bool> timer-running;
+    in property <int> custom-minutes: 11;
+    in-out property <image> tray-image: @image-url("../assets/clock.svg");
+    in property <string> status;
+    icon: root.tray-image;
+    tooltip: root.status;
+    callback icon-clicked();
+    clicked => { root.icon-clicked(); }
+    callback settings();
+    callback start(int);
+    callback restart();
+    callback abort();
+    callback quit();
+    Menu {
+        MenuItem { title: "Einstellungen..."; activated => { root.settings(); } }
+        MenuSeparator {}
+        for minute in (root.timer-running ? [] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]): MenuItem {
+            title: minute == 1 ? "1 Minute" : "\{minute} Minuten";
+            activated => { root.start(minute); }
+        }
+        if !root.timer-running: MenuItem {
+            title: "\{root.custom-minutes} Minuten (Benutzerdefiniert)";
+            activated => { root.start(root.custom-minutes); }
+        }
+        if root.timer-running: MenuItem {
+            title: "Timer abbrechen";
+            activated => { root.abort(); }
+        }
+        MenuItem { title: "Neu starten"; activated => { root.restart(); } }
+        MenuSeparator {}
+        MenuItem { title: "Beenden"; activated => { root.quit(); } }
+    }
+}
+
+export component AboutWindow inherits Dialog {
+    title: "Timer";
+    preferred-width: 300px;
+    callback dismiss();
+    Text { text: "Copyright by Dirk Schramm"; }
+    StandardButton { kind: ok; clicked => { root.dismiss(); } }
+}
