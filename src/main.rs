@@ -216,7 +216,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let window = window.as_weak();
         move || {
             if let Some(window) = window.upgrade() {
-                let _ = window.show();
+                if let Err(error) = window.show() {
+                    eprintln!(
+                        "Timer: Einstellungen-Fenster konnte nicht angezeigt werden: {error}"
+                    );
+                }
+                window.window().request_redraw();
             }
         }
     });
