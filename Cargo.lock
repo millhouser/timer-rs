@@ -1065,12 +1065,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "font8x8"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
-
-[[package]]
 name = "fontdb"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4188,8 +4182,8 @@ checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
 name = "timer-rs"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "chrono",
- "font8x8",
  "fontique",
  "notify-rust",
  "rfd",

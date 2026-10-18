@@ -40,6 +40,8 @@ Host-Build-Werkzeuge unter `target` zwischenspeichern. Bestehende Dateien in den
 alten Ausgabeordnern werden nicht automatisch geloescht.
 
 Bei verfuegbarem Infobereich startet die Anwendung wie das Original dort.
+Das Einstellungsfenster wird erst beim Oeffnen erzeugt, damit die fensterlose
+Tray-Anwendung unter Ubuntu nicht im Dock erscheint.
 Rechtsklick auf das Uhrsymbol oeffnet das Menue, ein Doppelklick startet die
 zuletzt gewaehlte Dauer erneut, auch bei bereits laufendem Timer. Unter Linux
 haengen Klickgesten vom Desktop ab; **Neu starten** ist auch im Menue verfuegbar.

@@ -18,23 +18,27 @@ struct App {
     countdown: Countdown,
     tray: Tray,
     tick: slint::Timer,
-    window: slint::Weak<SettingsWindow>,
+    settings_window: std::rc::Weak<RefCell<Option<SettingsWindow>>>,
+    sound_file: String,
+    sound_enabled: bool,
 }
 
 impl App {
     fn sync_window(&self) {
-        if let Some(window) = self.window.upgrade() {
-            window.set_timer_running(self.countdown.running);
-            window.set_timer_status(if self.countdown.running {
-                format!(
-                    "{}:{:02}",
-                    self.countdown.seconds_remaining / 60,
-                    self.countdown.seconds_remaining % 60
-                )
-                .into()
-            } else {
-                "Timer bereit".into()
-            });
+        if let Some(settings_window) = self.settings_window.upgrade() {
+            if let Some(window) = settings_window.borrow().as_ref() {
+                window.set_timer_running(self.countdown.running);
+                window.set_timer_status(if self.countdown.running {
+                    format!(
+                        "{}:{:02}",
+                        self.countdown.seconds_remaining / 60,
+                        self.countdown.seconds_remaining % 60
+                    )
+                    .into()
+                } else {
+                    "Timer bereit".into()
+                });
+            }
         }
     }
 
@@ -94,8 +98,10 @@ impl App {
         }
         self.sync_window();
         if expired {
-            if let Some(window) = self.window.upgrade() {
-                window.set_timer_status("Timer abgelaufen!".into());
+            if let Some(settings_window) = self.settings_window.upgrade() {
+                if let Some(window) = settings_window.borrow().as_ref() {
+                    window.set_timer_status("Timer abgelaufen!".into());
+                }
             }
         }
     }
@@ -111,117 +117,212 @@ impl App {
     }
 
     fn play(&self) {
-        if let Some(window) = self.window.upgrade() {
-            let path = window.get_sound_file();
-            if window.get_sound_enabled() && self.check_sound(&path) {
-                desktop::play_sound(Path::new(path.as_str()));
-            }
+        let (path, enabled) = self
+            .settings_window
+            .upgrade()
+            .and_then(|settings_window| {
+                settings_window.borrow().as_ref().map(|window| {
+                    (
+                        window.get_sound_file().to_string(),
+                        window.get_sound_enabled(),
+                    )
+                })
+            })
+            .unwrap_or_else(|| (self.sound_file.clone(), self.sound_enabled));
+        if enabled && self.check_sound(&path) {
+            desktop::play_sound(Path::new(&path));
         }
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn ensure_settings_window(
+    settings_window: &Rc<RefCell<Option<SettingsWindow>>>,
+    about_window: &Rc<RefCell<Option<AboutWindow>>>,
+    app: &Rc<RefCell<App>>,
+    directory: &Path,
+) -> Result<(), slint::PlatformError> {
+    if settings_window.borrow().is_some() {
+        return Ok(());
+    }
+
     let window = SettingsWindow::new()?;
-    let executable = std::env::current_exe()?;
-    let directory: PathBuf = executable.parent().unwrap().into();
-    window.set_sound_file(directory.join("ding.wav").to_string_lossy().as_ref().into());
+    {
+        let app = app.borrow();
+        window.set_sound_file(app.sound_file.as_str().into());
+        window.set_sound_enabled(app.sound_enabled);
+    }
     window.window().on_close_requested({
-        let window = window.as_weak();
+        let settings_window = Rc::downgrade(settings_window);
         move || {
-            if window
+            let standalone = settings_window
                 .upgrade()
-                .is_some_and(|window| window.get_standalone())
-            {
+                .and_then(|settings_window| {
+                    settings_window
+                        .borrow()
+                        .as_ref()
+                        .map(SettingsWindow::get_standalone)
+                })
+                .unwrap_or(false);
+            if standalone {
                 let _ = slint::quit_event_loop();
             }
             slint::CloseRequestResponse::HideWindow
         }
     });
-    let about = AboutWindow::new()?;
-    about.on_dismiss({
-        let about = about.as_weak();
-        move || {
-            if let Some(about) = about.upgrade() {
-                let _ = about.hide();
-            }
-        }
-    });
-    let app = Rc::new(RefCell::new(App {
-        countdown: Countdown::default(),
-        tray: Tray::new()?,
-        tick: slint::Timer::default(),
-        window: window.as_weak(),
-    }));
 
     window.on_quit(|| {
         let _ = slint::quit_event_loop();
     });
     window.on_about({
-        let about = about.as_weak();
+        let about_window = about_window.clone();
         move || {
-            if let Some(about) = about.upgrade() {
-                let _ = about.show();
+            if let Err(error) = show_about(&about_window) {
+                eprintln!("Timer: Info-Fenster konnte nicht angezeigt werden: {error}");
             }
         }
     });
     window.on_start({
-        let app = app.clone();
-        move |minutes| app.borrow_mut().start(minutes as u32, Rc::downgrade(&app))
+        let app = Rc::downgrade(app);
+        move |minutes| {
+            if let Some(app) = app.upgrade() {
+                app.borrow_mut().start(minutes as u32, Rc::downgrade(&app));
+            }
+        }
     });
     window.on_restart({
-        let app = app.clone();
+        let app = Rc::downgrade(app);
         move || {
-            let minutes = app.borrow().countdown.last_minutes;
-            app.borrow_mut().start(minutes, Rc::downgrade(&app));
+            if let Some(app) = app.upgrade() {
+                let minutes = app.borrow().countdown.last_minutes;
+                app.borrow_mut().start(minutes, Rc::downgrade(&app));
+            }
         }
     });
     window.on_abort({
-        let app = app.clone();
-        move || app.borrow_mut().abort()
+        let app = Rc::downgrade(app);
+        move || {
+            if let Some(app) = app.upgrade() {
+                app.borrow_mut().abort();
+            }
+        }
     });
     window.on_play({
-        let app = app.clone();
-        move || app.borrow().play()
+        let app = Rc::downgrade(app);
+        move || {
+            if let Some(app) = app.upgrade() {
+                app.borrow().play();
+            }
+        }
     });
     window.on_accept({
-        let app = app.clone();
-        let window = window.as_weak();
+        let app = Rc::downgrade(app);
+        let settings_window = Rc::downgrade(settings_window);
         move || {
-            if let Some(window) = window.upgrade() {
-                if app.borrow().check_sound(&window.get_sound_file()) && !window.get_standalone() {
-                    let _ = window.hide();
+            if let (Some(app), Some(settings_window)) = (app.upgrade(), settings_window.upgrade()) {
+                if let Some(window) = settings_window.borrow().as_ref() {
+                    if app.borrow().check_sound(&window.get_sound_file())
+                        && !window.get_standalone()
+                    {
+                        let _ = window.hide();
+                    }
                 }
             }
         }
     });
     window.on_browse({
-        let window = window.as_weak();
+        let settings_window = Rc::downgrade(settings_window);
+        let directory = directory.to_owned();
         move || {
             let directory = directory.clone();
-            let window = window.clone();
+            let settings_window = settings_window.clone();
             let _ = slint::spawn_local(async move {
                 let selected = desktop::choose_sound(&directory).await;
-                if let (Some(path), Some(window)) = (selected, window.upgrade()) {
-                    window.set_sound_file(path.to_string_lossy().as_ref().into());
+                if let (Some(path), Some(settings_window)) = (selected, settings_window.upgrade()) {
+                    if let Some(window) = settings_window.borrow().as_ref() {
+                        window.set_sound_file(path.to_string_lossy().as_ref().into());
+                    }
                 }
             });
         }
     });
     window.on_duration_changed({
-        let app = app.clone();
-        move |minutes| app.borrow().tray.set_custom_minutes(minutes as u32)
+        let app = Rc::downgrade(app);
+        move |minutes| {
+            if let Some(app) = app.upgrade() {
+                app.borrow().tray.set_custom_minutes(minutes as u32);
+            }
+        }
     });
 
-    app.borrow().tray.ui.on_settings({
-        let window = window.as_weak();
-        move || {
-            if let Some(window) = window.upgrade() {
-                if let Err(error) = window.show() {
-                    eprintln!(
-                        "Timer: Einstellungen-Fenster konnte nicht angezeigt werden: {error}"
-                    );
+    *settings_window.borrow_mut() = Some(window);
+    Ok(())
+}
+
+fn show_settings(
+    settings_window: &Rc<RefCell<Option<SettingsWindow>>>,
+    about_window: &Rc<RefCell<Option<AboutWindow>>>,
+    app: &Rc<RefCell<App>>,
+    directory: &Path,
+) -> Result<(), slint::PlatformError> {
+    ensure_settings_window(settings_window, about_window, app, directory)?;
+    app.borrow().sync_window();
+    let settings_window = settings_window.borrow();
+    let window = settings_window
+        .as_ref()
+        .expect("Einstellungen-Fenster wurde soeben erzeugt");
+    window.show()?;
+    window.window().request_redraw();
+    Ok(())
+}
+
+fn show_about(about_window: &Rc<RefCell<Option<AboutWindow>>>) -> Result<(), slint::PlatformError> {
+    if about_window.borrow().is_none() {
+        let about = AboutWindow::new()?;
+        about.on_dismiss({
+            let about_window = Rc::downgrade(about_window);
+            move || {
+                if let Some(about_window) = about_window.upgrade() {
+                    if let Some(about) = about_window.borrow().as_ref() {
+                        let _ = about.hide();
+                    }
                 }
-                window.window().request_redraw();
+            }
+        });
+        *about_window.borrow_mut() = Some(about);
+    }
+
+    let about_window = about_window.borrow();
+    about_window
+        .as_ref()
+        .expect("Info-Fenster wurde soeben erzeugt")
+        .show()
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let directory: PathBuf = executable.parent().unwrap().into();
+    let settings_window = Rc::new(RefCell::new(None));
+    let about_window = Rc::new(RefCell::new(None));
+    let app = Rc::new(RefCell::new(App {
+        countdown: Countdown::default(),
+        tray: Tray::new()?,
+        tick: slint::Timer::default(),
+        settings_window: Rc::downgrade(&settings_window),
+        sound_file: directory.join("ding.wav").to_string_lossy().into_owned(),
+        sound_enabled: true,
+    }));
+
+    app.borrow().tray.ui.on_settings({
+        let settings_window = settings_window.clone();
+        let about_window = about_window.clone();
+        let app = Rc::downgrade(&app);
+        let directory = directory.clone();
+        move || {
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            if let Err(error) = show_settings(&settings_window, &about_window, &app, &directory) {
+                eprintln!("Timer: Einstellungen-Fenster konnte nicht angezeigt werden: {error}");
             }
         }
     });
@@ -271,9 +372,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     if !desktop::tray_available() {
-        window.set_standalone(true);
+        ensure_settings_window(&settings_window, &about_window, &app, &directory)?;
+        settings_window
+            .borrow()
+            .as_ref()
+            .expect("Einstellungen-Fenster wurde soeben erzeugt")
+            .set_standalone(true);
         app.borrow().tray.ui.hide()?;
-        window.show()?;
+        settings_window
+            .borrow()
+            .as_ref()
+            .expect("Einstellungen-Fenster wurde soeben erzeugt")
+            .show()?;
     }
     app.borrow().sync_window();
     app.borrow().tray.notify("Timer gestartet", false);

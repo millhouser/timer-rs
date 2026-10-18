@@ -13,5 +13,7 @@ fn main() {
     std::fs::copy("assets/ding.wav", executable_dir.join("ding.wav"))
         .expect("ding.wav konnte nicht neben die EXE kopiert werden");
     println!("cargo:rerun-if-changed=assets/clock.ico");
+    println!("cargo:rerun-if-changed=assets/clock.svg");
     println!("cargo:rerun-if-changed=assets/ding.wav");
+    println!("cargo:rerun-if-changed=assets/font.ttf");
 }

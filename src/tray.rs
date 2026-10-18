@@ -1,5 +1,7 @@
 use crate::TimerTray;
-use font8x8::UnicodeFonts;
+use ab_glyph::{Font, Point, PxScale, ScaleFont};
+
+const FONT_DATA: &[u8] = include_bytes!("../assets/font.ttf");
 
 pub struct Tray {
     pub ui: TimerTray,
@@ -51,35 +53,105 @@ fn numbered_icon(base: &slint::Image, minutes: u32) -> slint::Image {
     let Some(mut buffer) = base.to_rgba8() else {
         return base.clone();
     };
-    let width = buffer.width() as usize;
-    let height = buffer.height() as usize;
+    let Ok(font) = ab_glyph::FontRef::try_from_slice(FONT_DATA) else {
+        return base.clone();
+    };
+
+    let width = buffer.width() as f32;
+    let height = buffer.height() as f32;
     let label = minutes.to_string();
-    let scale = (width / (label.len() * 8 + 8)).min(height / 16).max(1);
-    let left = width.saturating_sub(label.len() * 8 * scale) / 2;
-    let top = height.saturating_sub(8 * scale) / 2;
+
+    let font_size = if label.len() <= 1 {
+        height * 0.52
+    } else if label.len() == 2 {
+        height * 0.44
+    } else {
+        height * 0.85 / label.len() as f32
+    };
+
+    let scale = PxScale::from(font_size);
+    let scaled = font.as_scaled(scale);
+
+    let mut glyphs = Vec::with_capacity(label.len());
+    let mut total_w = 0.0f32;
+    for c in label.chars() {
+        let id = font.glyph_id(c);
+        let adv = scaled.h_advance(id);
+        glyphs.push((id, total_w));
+        total_w += adv;
+    }
+
+    let start_x = (width - total_w) / 2.0;
+    let baseline_y = (height + scaled.ascent() * 0.76) / 2.0;
+
+    let w_usize = buffer.width() as usize;
+    let h_usize = buffer.height() as usize;
     let pixels = buffer.make_mut_slice();
-    for (index, digit) in label.chars().enumerate() {
-        if let Some(glyph) = font8x8::BASIC_FONTS.get(digit) {
-            for (row, bits) in glyph.iter().enumerate() {
-                for column in 0..8 {
-                    if bits & (1 << column) != 0 {
-                        for offset_y in 0..scale {
-                            for offset_x in 0..scale {
-                                let x = left + (index * 8 + column) * scale + offset_x;
-                                let y = top + row * scale + offset_y;
-                                if x < width && y < height {
-                                    pixels[y * width + x] = slint::Rgba8Pixel::new(0, 0, 255, 255);
-                                }
-                            }
+
+    let halo_radius = (height / 40.0).round().max(1.0) as i32;
+
+    // Subtle white halo for crisp contrast against clock hands and dial
+    for (id, offset_x) in &glyphs {
+        for dy in -halo_radius..=halo_radius {
+            for dx in -halo_radius..=halo_radius {
+                if dx == 0 && dy == 0 || dx * dx + dy * dy > halo_radius * halo_radius + 1 {
+                    continue;
+                }
+                let g = id.with_scale_and_position(
+                    scale,
+                    Point {
+                        x: start_x + offset_x + dx as f32,
+                        y: baseline_y + dy as f32,
+                    },
+                );
+                if let Some(og) = font.outline_glyph(g) {
+                    let bounds = og.px_bounds();
+                    og.draw(|gx, gy, c| {
+                        let px = (bounds.min.x as i32 + gx as i32) as usize;
+                        let py = (bounds.min.y as i32 + gy as i32) as usize;
+                        if px < w_usize && py < h_usize {
+                            let idx = py * w_usize + px;
+                            let p = &mut pixels[idx];
+                            let factor = c * 0.85;
+                            let r = (p.r as f32 * (1.0 - factor) + 255.0 * factor).round() as u8;
+                            let g = (p.g as f32 * (1.0 - factor) + 255.0 * factor).round() as u8;
+                            let b = (p.b as f32 * (1.0 - factor) + 255.0 * factor).round() as u8;
+                            *p = slint::Rgba8Pixel::new(r, g, b, 255);
                         }
-                    }
+                    });
                 }
             }
         }
     }
+
+    // Smooth anti-aliased blue text
+    for (id, offset_x) in glyphs {
+        let g = id.with_scale_and_position(
+            scale,
+            Point {
+                x: start_x + offset_x,
+                y: baseline_y,
+            },
+        );
+        if let Some(og) = font.outline_glyph(g) {
+            let bounds = og.px_bounds();
+            og.draw(|gx, gy, c| {
+                let px = (bounds.min.x as i32 + gx as i32) as usize;
+                let py = (bounds.min.y as i32 + gy as i32) as usize;
+                if px < w_usize && py < h_usize {
+                    let idx = py * w_usize + px;
+                    let p = &mut pixels[idx];
+                    let r = (p.r as f32 * (1.0 - c) + 0.0 * c).round() as u8;
+                    let g = (p.g as f32 * (1.0 - c) + 0.0 * c).round() as u8;
+                    let b = (p.b as f32 * (1.0 - c) + 255.0 * c).round() as u8;
+                    *p = slint::Rgba8Pixel::new(r, g, b, 255);
+                }
+            });
+        }
+    }
+
     slint::Image::from_rgba8(buffer)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
